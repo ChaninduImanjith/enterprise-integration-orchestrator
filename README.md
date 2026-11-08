@@ -195,3 +195,4 @@ Exposes Prometheus metrics including:
 - `saga_compensations_total{step_name="inventory|payment"}`
 - `saga_step_duration_seconds_bucket`
 - `ai_schema_mappings_total{method="llama3_api|heuristic_fallback",status="success|fallback"}`
+

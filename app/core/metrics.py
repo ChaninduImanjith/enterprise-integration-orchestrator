@@ -25,3 +25,4 @@ AI_SCHEMA_MAPPINGS_TOTAL = Counter(
     "Total number of schema mappings performed by method",
     ["method", "status"]
 )
+
