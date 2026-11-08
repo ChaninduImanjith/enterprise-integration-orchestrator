@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orchestrator-api
+    ports:
+      - "8000:8000"
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - PROJECT_NAME=Enterprise Integration Orchestrator
+      - DEBUG=False
+      - LLAMA_API_BASE_URL=https://api.groq.com/openai/v1
+      - LLAMA_API_KEY=${LLAMA_API_KEY:-}
+      - LLAMA_MODEL=llama3-70b-8192
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: orchestrator-rabbitmq
@@ -14,4 +33,5 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+    restart: unless-stopped
