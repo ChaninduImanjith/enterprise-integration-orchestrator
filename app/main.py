@@ -2,6 +2,8 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from app.core.config import settings
 from app.core.rabbitmq import rabbitmq_client
 from app.api.webhooks import router as webhooks_router
@@ -46,6 +48,16 @@ app = FastAPI(
     description="Event-Driven Microservices Saga Orchestrator with RabbitMQ, AI Schema Mapping, and Fault Tolerance.",
     lifespan=lifespan
 )
+
+# Instrument Prometheus Observability
+instrumentator = Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=["/metrics", "/health"],
+    inprogress_name="in_progress_requests",
+)
+instrumentator.instrument(app).expose(app, endpoint="/metrics", tags=["Observability"])
 
 # Include Routers
 app.include_router(webhooks_router)

@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, Optional
 import httpx
 from app.core.config import settings
+from app.core.metrics import AI_SCHEMA_MAPPINGS_TOTAL
 from app.models.schemas import OrderItem, OrderPayload
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class AISchemaMapper:
         if order_id:
             result["order_id"] = str(order_id)
             
+        AI_SCHEMA_MAPPINGS_TOTAL.labels(method="heuristic_fallback", status="success").inc()
         return result
 
     async def map_legacy_payload_to_order(self, legacy_data: Dict[str, Any]) -> OrderPayload:
@@ -206,10 +208,13 @@ class AISchemaMapper:
                 parsed_json = self._clean_llm_json_response(raw_content)
                 logger.info("Successfully received and parsed mapped JSON from Meta Llama 3.")
                 
-                return OrderPayload.model_validate(parsed_json)
+                mapped_order = OrderPayload.model_validate(parsed_json)
+                AI_SCHEMA_MAPPINGS_TOTAL.labels(method="llama3_api", status="success").inc()
+                return mapped_order
 
         except Exception as exc:
             logger.exception(f"Llama 3 API mapping failed ({exc}). Engaging heuristic fallback...")
+            AI_SCHEMA_MAPPINGS_TOTAL.labels(method="llama3_api", status="fallback").inc()
             fallback_dict = self._fallback_heuristic_mapper(legacy_data)
             return OrderPayload.model_validate(fallback_dict)
 
