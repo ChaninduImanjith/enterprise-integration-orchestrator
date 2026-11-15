@@ -7,7 +7,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.core.config import settings
 from app.core.rabbitmq import rabbitmq_client
 from app.api.webhooks import router as webhooks_router
+from app.api.sagas import router as sagas_router
 from app.services.orchestrator import orchestrator_service
+from app.services.repository import saga_repository
 
 # Configure logging
 logging.basicConfig(
@@ -18,8 +20,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Connect to RabbitMQ & setup topologies
+    # Startup: Initialize DB and connect to RabbitMQ
     logger.info("Initializing Enterprise Integration Orchestrator...")
+    await saga_repository.init_db()
+    
     consumer_task = None
     try:
         await rabbitmq_client.connect()
@@ -61,6 +65,7 @@ instrumentator.instrument(app).expose(app, endpoint="/metrics", tags=["Observabi
 
 # Include Routers
 app.include_router(webhooks_router)
+app.include_router(sagas_router)
 
 @app.get("/health", tags=["System"])
 async def health_check():
