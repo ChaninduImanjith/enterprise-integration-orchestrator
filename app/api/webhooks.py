@@ -5,13 +5,14 @@ from app.core.config import settings
 from app.core.rabbitmq import rabbitmq_client
 from app.models.schemas import OrderPayload, SagaContext, SagaStatus, WebhookResponse
 from app.services.ai_mapper import ai_mapper_service
+from app.services.repository import saga_repository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks & Ingestion"])
 
 async def _publish_saga_event(order: OrderPayload) -> SagaContext:
-    """Helper to initialize Saga state context and publish event to RabbitMQ."""
+    """Helper to initialize Saga state context, persist it, and publish event to RabbitMQ."""
     saga_context = SagaContext(
         order=order,
         status=SagaStatus.STARTED,
@@ -19,6 +20,9 @@ async def _publish_saga_event(order: OrderPayload) -> SagaContext:
     )
 
     logger.info(f"Initiating Saga {saga_context.saga_id} for order {order.order_id}")
+
+    # Persist initial saga state to database
+    await saga_repository.save_saga(saga_context)
 
     if not rabbitmq_client.channel or rabbitmq_client.channel.is_closed:
         logger.error("RabbitMQ broker connection is unavailable.")

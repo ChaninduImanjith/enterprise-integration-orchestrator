@@ -23,6 +23,7 @@ from app.models.schemas import (
     ShippingStatus,
     StepStatus,
 )
+from app.services.repository import saga_repository
 
 logger = logging.getLogger(__name__)
 
@@ -168,52 +169,63 @@ class SagaOrchestrator:
     # -------------------------------------------------------------------------
     async def execute_saga(self, context: SagaContext) -> SagaContext:
         """
-        Executes the 3-step saga. Triggers automatic compensating transactions on failure.
+        Executes the 3-step saga with persistent state tracking and automatic compensating rollbacks.
         """
         logger.info(f"[{context.saga_id}] Starting Saga Execution for Order {context.order.order_id}")
         context.status = SagaStatus.IN_PROGRESS
+        await saga_repository.save_saga(context)
 
         # Step 1: Reserve Inventory
         try:
             await self.step_reserve_inventory(context)
+            await saga_repository.save_saga(context)
         except Exception as exc:
             logger.exception(f"[{context.saga_id}] Step 1 (Inventory) failed: {exc}")
             context.status = SagaStatus.FAILED
             context.error_message = f"Inventory step failed: {str(exc)}"
             SAGA_EXECUTIONS_TOTAL.labels(status="failed").inc()
+            await saga_repository.save_saga(context)
             return context
 
         # Step 2: Process Payment
         try:
             await self.step_process_payment(context)
+            await saga_repository.save_saga(context)
         except PaymentProcessingError as exc:
             logger.warning(f"[{context.saga_id}] Step 2 (Payment) failed. Commencing compensation...")
             context.status = SagaStatus.COMPENSATING
             context.error_message = str(exc)
+            await saga_repository.save_saga(context)
             
             # Rollback Step 1
             await self.compensate_inventory(context)
             
             context.status = SagaStatus.COMPENSATED
             SAGA_EXECUTIONS_TOTAL.labels(status="compensated").inc()
+            await saga_repository.save_saga(context)
             logger.info(f"[{context.saga_id}] Saga successfully compensated and rolled back.")
             return context
         except Exception as exc:
             logger.exception(f"[{context.saga_id}] Unexpected error in Step 2: {exc}")
             context.status = SagaStatus.COMPENSATING
             context.error_message = f"Unexpected payment error: {str(exc)}"
+            await saga_repository.save_saga(context)
+            
             await self.compensate_inventory(context)
             context.status = SagaStatus.COMPENSATED
             SAGA_EXECUTIONS_TOTAL.labels(status="compensated").inc()
+            await saga_repository.save_saga(context)
             return context
 
         # Step 3: Dispatch Shipping
         try:
             await self.step_dispatch_shipping(context)
+            await saga_repository.save_saga(context)
         except Exception as exc:
             logger.exception(f"[{context.saga_id}] Step 3 (Shipping) failed. Commencing multi-step rollback: {exc}")
             context.status = SagaStatus.COMPENSATING
             context.error_message = f"Shipping step failed: {str(exc)}"
+            await saga_repository.save_saga(context)
             
             # Rollback Step 2 & Step 1
             await self.compensate_payment(context)
@@ -221,6 +233,7 @@ class SagaOrchestrator:
             
             context.status = SagaStatus.COMPENSATED
             SAGA_EXECUTIONS_TOTAL.labels(status="compensated").inc()
+            await saga_repository.save_saga(context)
             return context
 
         # All Steps Completed Successfully
@@ -228,6 +241,7 @@ class SagaOrchestrator:
         context.current_step = "SAGA_COMPLETED"
         context.updated_at = datetime.now(timezone.utc)
         SAGA_EXECUTIONS_TOTAL.labels(status="completed").inc()
+        await saga_repository.save_saga(context)
         logger.info(f"[{context.saga_id}] Saga completed successfully for Order {context.order.order_id}")
         return context
 
