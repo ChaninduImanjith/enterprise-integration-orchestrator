@@ -11,6 +11,9 @@ class Settings(BaseModel):
     VERSION: str = Field(default=os.getenv("VERSION", "1.0.0"))
     DEBUG: bool = Field(default=os.getenv("DEBUG", "False").lower() in ("true", "1", "yes"))
     
+    # Database Settings
+    DATABASE_PATH: str = Field(default=os.getenv("DATABASE_PATH", str(BASE_DIR / "saga_store.db")))
+    
     # RabbitMQ Connection & Topologies
     RABBITMQ_URL: str = Field(default=os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"))
     WORKFLOW_EXCHANGE: str = Field(default=os.getenv("WORKFLOW_EXCHANGE", "saga.orchestrator.exchange"))
@@ -24,7 +27,7 @@ class Settings(BaseModel):
     RETRY_COUNT: int = Field(default=int(os.getenv("RETRY_COUNT", "5")))
     RETRY_DELAY: int = Field(default=int(os.getenv("RETRY_DELAY", "3")))
     
-    # Llama 3 API Settings (for Phase 3)
+    # Llama 3 API Settings
     LLAMA_API_BASE_URL: str = Field(default=os.getenv("LLAMA_API_BASE_URL", "https://api.groq.com/openai/v1"))
     LLAMA_API_KEY: str = Field(default=os.getenv("LLAMA_API_KEY", ""))
     LLAMA_MODEL: str = Field(default=os.getenv("LLAMA_MODEL", "llama3-70b-8192"))
