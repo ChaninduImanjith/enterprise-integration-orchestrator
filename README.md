@@ -6,7 +6,7 @@
 [![Llama 3](https://img.shields.io/badge/AI%20Engine-Meta%20Llama%203-blueviolet.svg)](https://ai.meta.com/llama/)
 [![Prometheus](https://img.shields.io/badge/Metrics-Prometheus-E6522C.svg)](https://prometheus.io)
 
-An event-driven enterprise integration microservice orchestrator implementing the **Saga Pattern** for distributed transactions with automatic compensating rollbacks. Features dynamic AI schema mapping using **Meta Llama 3**, robust fault tolerance with **RabbitMQ Dead Letter Queues (DLQ)**, and full observability with **Prometheus**.
+An event-driven enterprise integration microservice orchestrator implementing the **Saga Pattern** for distributed transactions with automatic compensating rollbacks. Features dynamic AI schema mapping using **Meta Llama 3**, persistent state management, robust fault tolerance with **RabbitMQ Dead Letter Queues (DLQ)**, and full observability with **Prometheus**.
 
 ---
 
@@ -18,6 +18,7 @@ flowchart TD
     Legacy["Legacy ERP / CRM"] -->|POST /api/v1/webhooks/legacy-order| AIMapper["AI Schema Mapper (Llama 3)"]
     AIMapper -->|Canonical OrderPayload| API
     
+    API -->|Persist Initial State| DB[(Saga State Store)]
     API -->|Publish saga.order.start| Exch["RabbitMQ Topic Exchange"]
     Exch -->|Route message| Queue["Order Saga Queue"]
     Queue -->|Consume| Worker["Saga Orchestrator Worker"]
@@ -34,6 +35,10 @@ flowchart TD
     Step2 -->|Success| Step3
     Step2 -->|Failure| Comp1
     
+    Worker -.->|Update State & Audit| DB
+    Client -->|GET /api/v1/sagas/{id}| API
+    API -->|Query| DB
+    
     Queue -.->|Poison Pill / Unprocessable| DLX["Dead Letter Exchange (DLX)"]
     DLX --> DLQ["Dead Letter Queue (DLQ)"]
 ```
@@ -48,16 +53,21 @@ flowchart TD
    - **Step 3: Dispatch Shipping** - Books logistics carrier dispatch with package tracking numbers.
    - **Automatic Compensation**: Upon payment failure, the orchestrator initiates backward compensation, releasing all reserved inventory units to prevent phantom locks.
 
-2. **AI-Powered Schema Mapper (Meta Llama 3)**
+2. **Persistent Saga State Store & Audit API**
+   - Built-in asynchronous SQLite repository using WAL (Write-Ahead Logging) mode.
+   - Live querying of transaction status, tracking numbers, payment IDs, and step timestamps via `GET /api/v1/sagas/{saga_id}`.
+   - Audited historical listing and filtering via `GET /api/v1/sagas?status=COMPLETED`.
+
+3. **AI-Powered Schema Mapper (Meta Llama 3)**
    - Ingests arbitrary, heterogeneous, or legacy JSON payloads from older ERPs or CRMs.
    - Leverages Meta Llama 3 via OpenAI-compatible endpoints (`Groq`, `vLLM`, `Together`) to transform inputs into strict Pydantic `OrderPayload` models.
    - Includes a deterministic heuristic fallback for zero-downtime offline execution.
 
-3. **Fault Tolerance & Dead Lettering**
+4. **Fault Tolerance & Dead Lettering**
    - Configured with `x-dead-letter-exchange` and `x-dead-letter-routing-key`.
    - Poison-pill or malformed messages are safely routed to a dedicated Dead Letter Queue (`saga.dlx.queue`) without blocking the primary ingestion queue.
 
-4. **Observability & Prometheus Metrics**
+5. **Observability & Prometheus Metrics**
    - Direct Prometheus endpoint exposed at `GET /metrics`.
    - Tracks in-progress requests, HTTP latency, saga execution rates, step durations, and compensation events.
 
@@ -68,6 +78,7 @@ flowchart TD
 - **Backend**: Python 3.12+, FastAPI, Uvicorn
 - **Asynchronous Messaging**: RabbitMQ, `aio-pika`
 - **AI Engine**: Meta Llama 3 (`llama3-70b-8192` via async `httpx`)
+- **Persistence**: Async SQLite with WAL mode
 - **Data Validation**: Pydantic v2
 - **Metrics**: `prometheus-fastapi-instrumentator`, `prometheus_client`
 - **Containerization**: Docker, Docker Compose
@@ -80,17 +91,19 @@ flowchart TD
 enterprise-integration-orchestrator/
 ├── app/
 │   ├── api/
+│   │   ├── sagas.py            # Saga state query and audit REST endpoints
 │   │   └── webhooks.py         # Webhook endpoints for standard and legacy orders
 │   ├── core/
-│   │   ├── config.py           # Environment and broker settings
+│   │   ├── config.py           # Environment, database, and broker settings
 │   │   ├── metrics.py          # Prometheus counters and histograms
 │   │   └── rabbitmq.py         # Async RabbitMQ client, topologies, and DLQ setup
 │   ├── models/
-│   │   ├── message.py          # Enterprise integration message envelops
+│   │   ├── message.py          # Enterprise integration message envelopes
 │   │   └── schemas.py          # Pydantic schemas (Order, Saga, Inventory, Payment)
 │   ├── services/
 │   │   ├── ai_mapper.py        # Meta Llama 3 dynamic schema transformation engine
-│   │   └── orchestrator.py     # 3-step Saga State Machine & compensation worker
+│   │   ├── orchestrator.py     # 3-step Saga State Machine & compensation worker
+│   │   └── repository.py       # Asynchronous Saga state store repository
 │   └── main.py                 # FastAPI lifecycle, Prometheus metrics, and routing
 ├── Dockerfile                  # Production container definition
 ├── docker-compose.yml          # Multi-container orchestration (App + RabbitMQ)
@@ -187,7 +200,17 @@ docker compose up --build
 }
 ```
 
-### 3. Observability & Metrics
+### 3. Query Saga Status by ID
+**`GET /api/v1/sagas/{saga_id}`**
+
+Returns the live status, step execution details, tracking numbers, payment transaction IDs, and compensation audit logs.
+
+### 4. List Historical Saga Executions
+**`GET /api/v1/sagas?status=COMPLETED&limit=20`**
+
+Lists paginated transactions with optional status filtering (`STARTED`, `IN_PROGRESS`, `COMPLETED`, `COMPENSATED`, `FAILED`).
+
+### 5. Observability & Metrics
 **`GET /metrics`**
 
 Exposes Prometheus metrics including:
@@ -195,4 +218,3 @@ Exposes Prometheus metrics including:
 - `saga_compensations_total{step_name="inventory|payment"}`
 - `saga_step_duration_seconds_bucket`
 - `ai_schema_mappings_total{method="llama3_api|heuristic_fallback",status="success|fallback"}`
-
